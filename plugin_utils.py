@@ -31,14 +31,16 @@ def del_directory(_dir):
 
 
 def combine2(args):
-    tb_primer = pd.read_table('_primer'.join(os.path.splitext(args.out)))
-    tb_screen_out = pd.read_table('_screen'.join(os.path.splitext(args.out)))
-    tb_primer['tmp_query'] = tb_primer.apply(lambda x: '_'.join([str(x['seqid']), str(x['start'], str(x['stop']))]),
+    tb_primer = pd.read_table('_primer'.join(os.path.splitext(args.output)))
+    tb_screen_out = pd.read_table('_screen'.join(os.path.splitext(args.output)))
+    if tb_primer.empty or tb_screen_out.empty:
+        return print('Primer of screen_out is empty')
+    tb_primer['tmp_query'] = tb_primer.apply(lambda x: '_'.join([str(x['seqid']), str(x['start']), str(x['end'])]),
                                              axis=1)
-    tb_screen_out['tmp_query'] = tb_screen_out.apply(lambda x: '_'.join([str(x['seqid']), str(x['start'],str(x['stop']))]),
+    tb_screen_out['tmp_query'] = tb_screen_out.apply(lambda x: '_'.join([str(x['seqid']), str(x['start']),str(x['end'])]),
                                                      axis=1)
-    tb_primer[tb_primer['tmp_query'].isin(tb_screen_out['tmp_query'].to_list())].to_csv(
-        '_filter_primer'.join(os.path.splitext(args.out))
+    tb_primer[tb_primer['tmp_query'].isin(tb_screen_out['tmp_query'].to_list())].drop(columns='tmp_query').to_csv(
+        '_filter_primer'.join(os.path.splitext(args.output)), sep='\t', index=False
     )
 
 
@@ -46,14 +48,16 @@ class PrimerDesign:
     location = os.path.abspath(os.path.join(__file__, '..'))
 
     def __init__(self, args):
-        self.sequences = {_.id: _.seq for _ in SeqIO.parse(args.input, 'fasta')}
+        self.sequences = {_.id: _ for _ in SeqIO.parse(args.input, 'fasta')}
         self.lengths = {_id: len(_seq.seq) for _id, _seq in self.sequences.items()}
         self.ssr_info = pd.read_table(args.output)
-        self.output = '_primer'.join(os.path.splitext(args.out))
+        self.output = '_primer'.join(os.path.splitext(args.output))
         self._config = mktemp()
         self._p3out = mktemp()
 
     def prepare_cfg(self, circular=False):
+        print("Primer design start")
+        print('(1/3) prepare config file')
         if not circular:
             meta_tb = self.ssr_info[(self.ssr_info['start'] > 200) & (self.ssr_info['end'] < self.lengths[self.ssr_info[
                 'seqid']]-200)]
@@ -76,6 +80,7 @@ class PrimerDesign:
             f2.write("\n")
 
     def design_primer(self):
+        print('(2/3) Run Primer3')
         _cmd = ' '.join(
                        ['primer3_core',
                         '--p3_settings_file='+os.path.join(PrimerDesign.location, 'SSR_primer3_settings.txt'),
@@ -85,6 +90,7 @@ class PrimerDesign:
         os.system(_cmd)
 
     def parse_output(self):
+        print('(3/3) Parse result')
         _a = open(self._p3out, 'r')
         _file = deque(_a.read().splitlines())
         _module = []
@@ -110,15 +116,16 @@ class PrimerDesign:
                                    }
                         _record_list.append(_record)
                     else:
-                        _record = {'Assembly': '_'.join(_model_dict['SEQUENCE_ID'].split('_')[:-2]),
-                                   'GenomePosition': '-'.join(_model_dict['SEQUENCE_ID'].split('_')[-2:]),
-                                   'Seq': _model_dict['SEQUENCE_TEMPLATE']
+                        _record = {'seqid': '_'.join(_model_dict['SEQUENCE_ID'].split('_')[:-2]),
+                                   'start': _model_dict['SEQUENCE_ID'].split('_')[-2],
+                                   'end': _model_dict['SEQUENCE_ID'].split('_')[-1]
                                    }
                         _record_list.append(_record)
                     _module = []
                 else:
                     continue
         pd.DataFrame(_record_list).to_csv(self.output, sep='\t', index=False)
+        print('Primer design done')
 
     def remove_tmp_file(self):
         os.remove(self._config)
@@ -135,9 +142,10 @@ class ScreenSSR:
         self._tmpdir = mktemp()
 
     def blast_pair(self):
+        print('Screen SSR start')
         # make a temporary directory for BLAST
         os.mkdir(self._tmpdir)
-        sequences = {_.id: _.seq for _ in SeqIO.parse(self._seq_path, 'fasta')}
+        sequences = {_.id: _ for _ in SeqIO.parse(self._seq_path, 'fasta')}
         lengths = {_id: len(_seq.seq) for _id, _seq in sequences.items()}
         ssr_info = pd.read_table(self._ssr_info)
         ssr_info = ssr_info[ssr_info['seqid'].isin(self._assembly)]
@@ -145,6 +153,7 @@ class ScreenSSR:
             ssr_info = ssr_info[(ssr_info['start'] > 200) &
                                 (ssr_info['end'] < lengths[ssr_info['seqid']] - 200)]
         # prepare sequences
+        print('(1/3) prepare sequence for BLAST')
         seqlist = []
         for _idx, _item in ssr_info.iterrows():
             genome_seq = sequences[_item['seqid']]
@@ -156,6 +165,7 @@ class ScreenSSR:
             f.write('\n'.join(seqlist))
             f.write('\n')
         # BLAST
+        print('(2/3) BLAST start')
         database_cmd = NcbimakeblastdbCommandline(
             dbtype='nucl',
             input_file=os.path.join(self._tmpdir, 'query.fasta'))
@@ -170,47 +180,48 @@ class ScreenSSR:
             max_hsps=1)
         database_cmd()
         blastn_cmd()
+        print('(2/3) BLAST Done')
 
     def blast_parse(self):
+        print('(3/3) Parse BLAST result')
         blast_result = pd.read_table(os.path.join(self._tmpdir, 'blast_result.txt'),
-                                     names=['query', 'subject', 'length', 'identity', 'evalue'])
+                                     names=['query_', 'subject_', 'length', 'identity', 'evalue'])
         ssr_info = pd.read_table(self._ssr_info)
         # filter blast result
         query_asm = self._assembly[0]
-        blast_result = blast_result[(blast_result['query'] == query_asm) & ~(blast_result['subject'] == query_asm)]
+        blast_result = blast_result[(blast_result.query_.str.startswith(query_asm)) & ~(blast_result.subject_.str.startswith(query_asm))]
         #
-        query_list = list(set(blast_result['query'].to_list()))
+        query_list = list(set(blast_result['query_'].to_list()))
         keep_list = []
         # get keep list
         for _query in query_list:
-            _query_table = blast_result[blast_result['query'] == _query]
+            _query_table = blast_result[blast_result['query_'] == _query]
             q_start, q_end = _query.split('_')[-2:]
-            query_motif, query_unit = ssr_info[(ssr_info['seqid'] == _query) &
-                                               (ssr_info['start'] == q_start) &
-                                               (ssr_info['end'] == q_end),
-                                               ['motif', 'units']]
+            query_class, query_unit = ssr_info[(ssr_info['seqid'] == query_asm) &
+                                               (ssr_info['start'] == int(q_start)) &
+                                               (ssr_info['end'] == int(q_end))].iloc[0][['class', 'units']]
             subject_list = [query_asm]
             subject_id_list = []
             for _idx, _row in _query_table.iterrows():
-                s_id = '_'.join(_row['subject'].split('_')[:-2])
-                s_start, s_end = _row['subject'].split('_')[-2:]
-                subject_motif, subject_unit = ssr_info[(ssr_info['seqid'] == s_id) &
-                                                       (ssr_info['start'] == s_start) &
-                                                       (ssr_info['end'] == s_end),
-                                                       ['motif', 'units']]
-                if (subject_motif == query_motif) and (not query_unit == subject_unit):
+                s_id = '_'.join(_row['subject_'].split('_')[:-2])
+                s_start, s_end = _row['subject_'].split('_')[-2:]
+                subject_class, subject_unit = ssr_info[(ssr_info['seqid'] == s_id) &
+                                                       (ssr_info['start'] == int(s_start)) &
+                                                       (ssr_info['end'] == int(s_end))].iloc[0][['class', 'units']]
+                if (subject_class == query_class) and (not query_unit == subject_unit):
                     subject_list.append(s_id)
-                    subject_id_list.append(_row['subject'])
+                    subject_id_list.append(_row['subject_'])
             if set(subject_list) == set(self._assembly):
                 keep_list.append(_query)
                 keep_list += subject_id_list
         # screen out keep list in ssr_info
-        ssr_info['tmp_query'] = ssr_info.apply(lambda x: '_'.join([str(x['seqid']), str(x['start'], str(x['stop']))]),
+        ssr_info['tmp_query'] = ssr_info.apply(lambda x: '_'.join([str(x['seqid']), str(x['start']), str(x['end'])]),
                                                axis=1)
         ssr_info = ssr_info[ssr_info['tmp_query'].isin(keep_list)]
         ssr_info.drop(columns='tmp_query', inplace=True)
         # output
         ssr_info.to_csv('_screen'.join(os.path.splitext(self._ssr_info)), sep='\t', index=False)
+        print('(3/3) Parse done')
 
     def remove_tmp_file(self):
         del_directory(self._tmpdir)

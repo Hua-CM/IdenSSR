@@ -12,7 +12,7 @@ import multiprocessing as multi
 from tqdm import tqdm
 
 
-def build_rep_set(repeat_file, unit_cutoff=None):
+def build_rep_set(repeat_file, unit_cutoff=None, motif_length_cutoff=None):
     """
         Outputs the repeats info dictionary used by the get_ssrs function.
         Takes list of repeat motifs from repeats file(output by generate_repeats function) as input.
@@ -26,8 +26,10 @@ def build_rep_set(repeat_file, unit_cutoff=None):
     for line in repeat_file:
         motif_dict = dict()
         L = line.strip().split('\t')
-        motif = L[0]
         motif_length = int(L[2])
+        if motif_length < motif_length_cutoff:
+            continue
+        motif = L[0]
         motif = motif*unit_cutoff[motif_length]
         cutoffs.add(len(motif))
         motif_dict['class'] = L[1]
@@ -101,6 +103,9 @@ def fasta_ssrs(args, repeats_info):
     records = [ _ for _ in SeqIO.parse(handle, 'fasta')]
     num_records = len(records)
 
+    file_output = open(args.output, 'w')
+    print('\t'.join(['seqid', 'start', 'end', 'class', 'length', 'strand', 'units', 'motif']), file=file_output)
+
     if args.threads > 1:
         i = 0
         pool = multi.Pool(processes=args.threads)
@@ -114,19 +119,18 @@ def fasta_ssrs(args, repeats_info):
 
         # Concat all the output files into one.
         temp_outs = tqdm(range(num_records), total=num_records)
-        print(['seqid', 'start', 'end', 'class', 'length', 'strand', 'units', 'motif'], sep='\t', file=args.output)
+
         for o in temp_outs:
             name = './temp_%s.tsv' % (o)
             temp_outs.set_description("Concatenating file: %d " % (o))
             with open(name, 'r') as fh:
                 for line in fh:
-                    print(line.strip(), file=args.output)
+                    print(line.strip(), file=file_output)
             del_file(name)
 
     elif args.threads == 1:
         records = tqdm(records, total=num_records)
-        print(['seqid', 'start', 'end', 'class', 'length', 'strand', 'units', 'motif'], sep='\t', file=args.output)
         for record in records:
             records.set_description("Processing %s" % (record.id))
-            get_ssrs(record, repeats_info, args.output)
+            get_ssrs(record, repeats_info, file_output)
 

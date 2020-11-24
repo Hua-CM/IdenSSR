@@ -23,15 +23,17 @@ def getArgs():
     optional = parser.add_argument_group('Optional arguments')
     optional.add_argument('-c', '--circular', action='store_true', default=False,
                           help='The sequences are circular sequence')
-    optional.add_argument('-m', '--min-motif-size', type=int, nargs='+', metavar='<INT>', default=[9, 6, 6, 6, 5, 5],
-                          help='Minimum size of a repeat motif in bp. Default 9, 6, 6, 6, 5, 5 for mono-, di-, tri-, '
+    optional.add_argument('-u', '--min-repeat-units', type=int, nargs='+', metavar='<INT>', default=[9, 6, 6, 6, 5, 5],
+                          help='Minimum unit of a repeat motif. Default 9 6 6 6 5 5 for mono-, di-, tri-, '
                                'tetra-, penta-, hexa- nucleotide repeat, respectively')
+    optional.add_argument('-m', '--min-motif-size', type=int, metavar='<INT>', default=1,
+                          help='Only keep motifs greater than or equal to the minium motif size. Default 1 (which means keep all SSR)')
     optional.add_argument('-p', '--primer', action='store_true', default=False,
                           help='Design primer at the same time')
     optional.add_argument('-s', '--screen', action='store_true', default=False,
                           help='Screen out the SSR could used in identification at the same time')
-    optional.add_argument('-a', '--assembly', nargs='+',
-                          help='Confirm the SSR could used in Identification at the same time')
+    optional.add_argument('-a', '--assembly', nargs='+', type=str,
+                          help='The sequence id you want to screen')
     # Multiprocessing threads
     optional.add_argument('-t', '--threads', type=int, metavar='<INT>', default=1, help='Number of threads to run the process on. Default is 1.')
 
@@ -47,8 +49,8 @@ def main():
     args = getArgs()
 
     location = os.path.abspath(os.path.join(__file__, '..'))
-    motif_size_dict = {_[0]: _[1] for _ in zip([1, 2, 3, 4, 5, 6], args.min_motif_size)}
-    repeats_info = build_rep_set(open(os.path.join(location, 'all_repeats_1-6nt.txt'), 'r'), motif_size_dict)
+    unit_size_dict = {_[0]: _[1] for _ in zip([1, 2, 3, 4, 5, 6], args.min_repeat_units)}
+    repeats_info = build_rep_set(open(os.path.join(location, 'all_repeats_1-6nt.txt'), 'r'), unit_size_dict, args.min_motif_size)
     fasta_ssrs(args, repeats_info)
     if args.screen:
         screen = ScreenSSR(args)
