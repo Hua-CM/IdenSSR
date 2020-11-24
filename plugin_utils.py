@@ -225,3 +225,7 @@ class ScreenSSR:
 
     def remove_tmp_file(self):
         del_directory(self._tmpdir)
+
+
+class ScreenSSR2:
+    pass
