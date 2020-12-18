@@ -59,8 +59,11 @@ class PrimerDesign:
         print("Primer design start")
         print('(1/3) prepare config file')
         if not circular:
-            meta_tb = self.ssr_info[(self.ssr_info['start'] > 200) & (self.ssr_info['end'] < self.lengths[self.ssr_info[
-                'seqid']]-200)]
+            _tuple_list = []
+            for _tuple in self.ssr_info.itertuples():
+                if (_tuple.start > 200) & (_tuple.end < self.lengths[_tuple.seqid] - 200):
+                    _tuple_list.append(_tuple)
+            meta_tb = pd.DataFrame(_tuple_list).drop(columns='Index')
         else:
             meta_tb = self.ssr_info
         _write_list = []
