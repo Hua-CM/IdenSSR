@@ -12,7 +12,7 @@ from tempfile import mktemp
 from Bio import SeqIO
 from collections import deque
 from Bio.Blast.Applications import NcbiblastnCommandline, NcbimakeblastdbCommandline
-
+from itertools import combinations
 
 def get_seq(_seq, _start, _end):
     if _start <= 200:
@@ -294,42 +294,43 @@ class ScreenSSR2:
         ssr_info = pd.read_table(self._ssr_info)
         meta_info = pd.read_table(self._meta, names=['group', 'seqid'])
         _seq_list_list = meta_info.groupby('group')['seqid'].apply(list).reset_index(name='seqid')['seqid'].to_list()
-        group1_seq = _seq_list_list.pop(0)
-        blast_result = blast_result[(blast_result.query_.str.startswith(tuple(group1_seq))) &
-                                    ~(blast_result.subject_.str.startswith(tuple(group1_seq)))]
-        query_list = list(set(blast_result['query_'].to_list()))
-        keep_list = []
-        # Check for homology in all groups
-        for _query in query_list:
-            _query_table = blast_result[blast_result['query_'] == _query]
-            _query_asm = '_'.join(_query.split('_')[:-2])
-            q_start, q_end = _query.split('_')[-2:]
-            query_class, query_unit = ssr_info[(ssr_info['seqid'] == _query_asm) &
-                                               (ssr_info['start'] == int(q_start)) &
-                                               (ssr_info['end'] == int(q_end))].iloc[0][['class', 'units']]
-            subject_list = []
-            subject_id_list = []
-            for _idx, _row in _query_table.iterrows():
-                s_id = '_'.join(_row['subject_'].split('_')[:-2])
-                s_start, s_end = _row['subject_'].split('_')[-2:]
-                subject_class, subject_unit = ssr_info[(ssr_info['seqid'] == s_id) &
-                                                       (ssr_info['start'] == int(s_start)) &
-                                                       (ssr_info['end'] == int(s_end))].iloc[0][['class', 'units']]
-                if (subject_class == query_class) and (not query_unit == subject_unit):
-                    subject_list.append(s_id)
-                    subject_id_list.append(_row['subject_'])
-            bool_list = [set(subject_list) & set(_) is not None for _ in _seq_list_list]
-            if sum(bool_list) == len(_seq_list_list):
-                keep_list.append(_query)
-                keep_list += subject_id_list
+        _group_list_list = meta_info.groupby('group')['seqid'].apply(list).reset_index(name='seqid')['group'].to_list()
+        for _idx_tuple in combinations(range(len(_seq_list_list)), 2):
+            _query_group = _seq_list_list[_idx_tuple[0]]
+            _subject_group = _seq_list_list[_idx_tuple[1]]
+            blast_moudle_result = blast_result[(blast_result.query_.str.startswith(tuple(_query_group))) &
+                                               ~(blast_result.subject_.str.startswith(tuple(_query_group)))]
+            query_list = list(set(blast_moudle_result['query_'].to_list()))
+            keep_list = []
+            for _query in query_list:
+                _query_table = blast_moudle_result[blast_moudle_result['query_'] == _query]
+                _query_asm = '_'.join(_query.split('_')[:-2])
+                q_start, q_end = _query.split('_')[-2:]
+                query_class, query_unit = ssr_info[(ssr_info['seqid'] == _query_asm) &
+                                                   (ssr_info['start'] == int(q_start)) &
+                                                   (ssr_info['end'] == int(q_end))].iloc[0][['class', 'units']]
+                subject_id_list = []
+                for _idx, _row in _query_table.iterrows():
+                    s_id = '_'.join(_row['subject_'].split('_')[:-2])
+                    s_start, s_end = _row['subject_'].split('_')[-2:]
+                    subject_class, subject_unit = ssr_info[(ssr_info['seqid'] == s_id) &
+                                                           (ssr_info['start'] == int(s_start)) &
+                                                           (ssr_info['end'] == int(s_end))].iloc[0][['class', 'units']]
+                    if (subject_class == query_class) and (not query_unit == subject_unit) and (s_id in _subject_group):
+                        subject_id_list.append(_row['subject_'])
+                if not len(subject_id_list) == 0:
+                    keep_list.append(_query)
+                    keep_list += subject_id_list
             # screen out keep list in ssr_info
-        ssr_info['tmp_query'] = ssr_info.apply(
-            lambda x: '_'.join([str(x['seqid']), str(x['start']), str(x['end'])]),
-            axis=1)
-        ssr_info = ssr_info[ssr_info['tmp_query'].isin(keep_list)]
-        ssr_info.drop(columns='tmp_query', inplace=True)
-        # output
-        ssr_info.to_csv('_screen'.join(os.path.splitext(self._ssr_info)), sep='\t', index=False)
+            ssr_info['tmp_query'] = ssr_info.apply(
+                lambda x: '_'.join([str(x['seqid']), str(x['start']), str(x['end'])]),
+                axis=1)
+            ssr_info = ssr_info[ssr_info['tmp_query'].isin(keep_list)]
+            ssr_info.drop(columns='tmp_query', inplace=True)
+            # output
+            _file_name = _group_list_list[_idx_tuple[0]] + 'vs' + _group_list_list[_idx_tuple[1]] + '_screen'
+            _file_name = os.path.join(os.path.splitext(self._ssr_info)[0], _file_name)
+            ssr_info.to_csv(_file_name, sep='\t', index=False)
         print('(3/3) Parse done')
 
     def remove_tmp_file(self):
