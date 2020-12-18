@@ -322,15 +322,16 @@ class ScreenSSR2:
                     keep_list.append(_query)
                     keep_list += subject_id_list
             # screen out keep list in ssr_info
-            ssr_info['tmp_query'] = ssr_info.apply(
+            ssr_info_copy = ssr_info.copy()
+            ssr_info_copy['tmp_query'] = ssr_info_copy.apply(
                 lambda x: '_'.join([str(x['seqid']), str(x['start']), str(x['end'])]),
                 axis=1)
-            ssr_info = ssr_info[ssr_info['tmp_query'].isin(keep_list)]
-            ssr_info.drop(columns='tmp_query', inplace=True)
+            ssr_info_copy = ssr_info_copy[ssr_info_copy['tmp_query'].isin(keep_list)]
+            ssr_info_copy.drop(columns='tmp_query', inplace=True)
             # output
-            _file_name = _group_list_list[_idx_tuple[0]] + 'vs' + _group_list_list[_idx_tuple[1]] + '_screen'
-            _file_name = os.path.join(os.path.splitext(self._ssr_info)[0], _file_name)
-            ssr_info.to_csv(_file_name, sep='\t', index=False)
+            _file_name = _group_list_list[_idx_tuple[0]] + 'vs' + _group_list_list[_idx_tuple[1]] + '_screen.txt'
+            _file_name = os.path.join(os.path.split(self._ssr_info)[0], _file_name)
+            ssr_info_copy.to_csv(_file_name, sep='\t', index=False)
         print('(3/3) Parse done')
 
     def remove_tmp_file(self):
