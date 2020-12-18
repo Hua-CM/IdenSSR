@@ -30,9 +30,10 @@ def del_directory(_dir):
         os.removedirs(r_)
 
 
-def combine2(args):
-    tb_primer = pd.read_table('_primer'.join(os.path.splitext(args.output)))
-    tb_screen_out = pd.read_table('_screen'.join(os.path.splitext(args.output)))
+def combine2(primer_table, ssr_table):
+    #tb_primer = pd.read_table()
+    tb_primer = pd.read_table(primer_table)
+    tb_screen_out = pd.read_table(ssr_table)
     if tb_primer.empty or tb_screen_out.empty:
         return print('Primer of screen_out is empty')
     tb_primer['tmp_query'] = tb_primer.apply(lambda x: '_'.join([str(x['seqid']), str(x['start']), str(x['end'])]),
@@ -40,7 +41,7 @@ def combine2(args):
     tb_screen_out['tmp_query'] = tb_screen_out.apply(lambda x: '_'.join([str(x['seqid']), str(x['start']),str(x['end'])]),
                                                      axis=1)
     tb_primer[tb_primer['tmp_query'].isin(tb_screen_out['tmp_query'].to_list())].drop(columns='tmp_query').to_csv(
-        '_filter_primer'.join(os.path.splitext(args.output)), sep='\t', index=False
+        '_primer'.join(os.path.splitext(ssr_table)), sep='\t', index=False
     )
 
 
@@ -241,6 +242,7 @@ class ScreenSSR2:
         self._circular = args.circular
         self._threads = args.threads
         self._tmpdir = mktemp()
+        self._primer = args.primer
 
     def blast_pair(self):
         print('Screen SSR start')
@@ -329,9 +331,11 @@ class ScreenSSR2:
             ssr_info_copy = ssr_info_copy[ssr_info_copy['tmp_query'].isin(keep_list)]
             ssr_info_copy.drop(columns='tmp_query', inplace=True)
             # output
-            _file_name = _group_list_list[_idx_tuple[0]] + 'vs' + _group_list_list[_idx_tuple[1]] + '_screen.txt'
+            _file_name = _group_list_list[_idx_tuple[0]] + 'VS' + _group_list_list[_idx_tuple[1]] + '_screen.txt'
             _file_name = os.path.join(os.path.split(self._ssr_info)[0], _file_name)
             ssr_info_copy.to_csv(_file_name, sep='\t', index=False)
+            if self._primer:
+                combine2('_primer'.join(os.path.splitext(self._ssr_info)), _file_name)
         print('(3/3) Parse done')
 
     def remove_tmp_file(self):

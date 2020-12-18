@@ -35,7 +35,8 @@ def getArgs():
     optional.add_argument('-m', '--meta', type=str,
                           help='The meta file for screening')
     # Multiprocessing threads
-    optional.add_argument('-t', '--threads', type=int, metavar='<INT>', default=1, help='Number of threads to run the process on. Default is 1.')
+    optional.add_argument('-t', '--threads', type=int, metavar='<INT>', default=1,
+                          help='Number of threads to run the process on. Default is 1.')
 
     args = parser.parse_args()
 
@@ -52,20 +53,17 @@ def main():
     unit_size_dict = {_[0]: _[1] for _ in zip([1, 2, 3, 4, 5, 6], args.min_repeat_units)}
     repeats_info = build_rep_set(open(os.path.join(location, 'all_repeats_1-6nt.txt'), 'r'), unit_size_dict, args.min_motif_size)
     fasta_ssrs(args, repeats_info)
-    if args.screen:
-        screen = ScreenSSR2(args)
-        screen.blast_pair()
-        screen.blast_parse()
-        screen.remove_tmp_file()
     if args.primer:
         primer_ = PrimerDesign(args)
         primer_.prepare_cfg(circular=args.circular)
         primer_.design_primer()
         primer_.parse_output()
         primer_.remove_tmp_file()
-    if args.screen and args.primer:
-        # filter primer for screened SSR
-        combine2(args)
+    if args.screen:
+        screen = ScreenSSR2(args)
+        screen.blast_pair()
+        screen.blast_parse()
+        screen.remove_tmp_file()
 
 
 if __name__ == '__main__':
