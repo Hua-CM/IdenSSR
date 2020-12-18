@@ -150,8 +150,11 @@ class ScreenSSR:
         ssr_info = pd.read_table(self._ssr_info)
         ssr_info = ssr_info[ssr_info['seqid'].isin(self._assembly)]
         if not self._circular:
-            ssr_info = ssr_info[(ssr_info['start'] > 200) &
-                                (ssr_info['end'] < lengths[ssr_info['seqid']] - 200)]
+            _tuple_list = []
+            for _tuple in ssr_info.itertuples():
+                if (_tuple.start > 200) & (_tuple.end < lengths[_tuple.seqid] - 200):
+                    _tuple_list.append(_tuple)
+            ssr_info = pd.DataFrame(_tuple_list).drop(columns='Index')
         # prepare sequences
         print('(1/3) prepare sequence for BLAST')
         seqlist = []
@@ -228,4 +231,103 @@ class ScreenSSR:
 
 
 class ScreenSSR2:
-    pass
+    def __init__(self, args):
+        self._seq_path = args.input
+        self._ssr_info = args.output
+        self._meta = args.meta
+        self._circular = args.circular
+        self._threads = args.threads
+        self._tmpdir = mktemp()
+
+    def blast_pair(self):
+        print('Screen SSR start')
+        # make a temporary directory for BLAST
+        os.mkdir(self._tmpdir)
+        sequences = {_.id: _ for _ in SeqIO.parse(self._seq_path, 'fasta')}
+        lengths = {_id: len(_seq.seq) for _id, _seq in sequences.items()}
+        ssr_info = pd.read_table(self._ssr_info)
+        meta_info = pd.read_table(self._meta, names=['group', 'seqid'])
+        ssr_info = ssr_info[ssr_info['seqid'].isin(meta_info['seqid'].to_list())]
+        if not self._circular:
+            _tuple_list = []
+            for _tuple in ssr_info.itertuples():
+                if (_tuple.start > 200) & (_tuple.end < lengths[_tuple.seqid] - 200):
+                    _tuple_list.append(_tuple)
+            ssr_info = pd.DataFrame(_tuple_list).drop(columns='Index')
+        # prepare sequences
+        print('(1/3) prepare sequence for BLAST')
+        seqlist = []
+        for _idx, _item in ssr_info.iterrows():
+            genome_seq = sequences[_item['seqid']]
+            _sequence_id = str(genome_seq.id) + "_" + str(_item['start']) + "_" + str(_item['end'])
+            _sequence_template = str(get_seq(genome_seq, _item['start'], _item['end']))
+            seqlist.append('>' + _sequence_id)
+            seqlist.append(_sequence_template)
+        with open(os.path.join(self._tmpdir, 'query.fasta'), 'w') as f:
+            f.write('\n'.join(seqlist))
+            f.write('\n')
+        # BLAST
+        print('(2/3) BLAST start')
+        database_cmd = NcbimakeblastdbCommandline(
+            dbtype='nucl',
+            input_file=os.path.join(self._tmpdir, 'query.fasta'))
+        blastn_cmd = NcbiblastnCommandline(
+            query=os.path.join(self._tmpdir, 'query.fasta'),
+            db=os.path.join(self._tmpdir, 'query.fasta'),
+            dust='no',
+            outfmt='\"6 qacc sacc length pident evalue\"',
+            num_threads=self._threads,
+            evalue='1e-3',
+            out=os.path.join(self._tmpdir, 'blast_result.txt'),
+            max_hsps=1)
+        database_cmd()
+        blastn_cmd()
+        print('(2/3) BLAST Done')
+
+    def blast_parse(self):
+        print('(3/3) Parse BLAST result')
+        blast_result = pd.read_table(os.path.join(self._tmpdir, 'blast_result.txt'),
+                                     names=['query_', 'subject_', 'length', 'identity', 'evalue'])
+        ssr_info = pd.read_table(self._ssr_info)
+        meta_info = pd.read_table(self._meta, names=['group', 'seqid'])
+        _seq_list_list = meta_info.groupby('group')['seqid'].apply(list).reset_index(name='seqid')['seqid'].to_list()
+        group1_seq = _seq_list_list.pop(0)
+        blast_result = blast_result[(blast_result.query_.str.startswith(tuple(group1_seq))) &
+                                    ~(blast_result.subject_.str.startswith(tuple(group1_seq)))]
+        query_list = list(set(blast_result['query_'].to_list()))
+        keep_list = []
+        # Check for homology in all groups
+        for _query in query_list:
+            _query_table = blast_result[blast_result['query_'] == _query]
+            _query_asm = '_'.join(_query.split('_')[:-2])
+            q_start, q_end = _query.split('_')[-2:]
+            query_class, query_unit = ssr_info[(ssr_info['seqid'] == _query_asm) &
+                                               (ssr_info['start'] == int(q_start)) &
+                                               (ssr_info['end'] == int(q_end))].iloc[0][['class', 'units']]
+            subject_list = []
+            subject_id_list = []
+            for _idx, _row in _query_table.iterrows():
+                s_id = '_'.join(_row['subject_'].split('_')[:-2])
+                s_start, s_end = _row['subject_'].split('_')[-2:]
+                subject_class, subject_unit = ssr_info[(ssr_info['seqid'] == s_id) &
+                                                       (ssr_info['start'] == int(s_start)) &
+                                                       (ssr_info['end'] == int(s_end))].iloc[0][['class', 'units']]
+                if (subject_class == query_class) and (not query_unit == subject_unit):
+                    subject_list.append(s_id)
+                    subject_id_list.append(_row['subject_'])
+            bool_list = [set(subject_list) & set(_) is not None for _ in _seq_list_list]
+            if sum(bool_list) == len(_seq_list_list):
+                keep_list.append(_query)
+                keep_list += subject_id_list
+            # screen out keep list in ssr_info
+        ssr_info['tmp_query'] = ssr_info.apply(
+            lambda x: '_'.join([str(x['seqid']), str(x['start']), str(x['end'])]),
+            axis=1)
+        ssr_info = ssr_info[ssr_info['tmp_query'].isin(keep_list)]
+        ssr_info.drop(columns='tmp_query', inplace=True)
+        # output
+        ssr_info.to_csv('_screen'.join(os.path.splitext(self._ssr_info)), sep='\t', index=False)
+        print('(3/3) Parse done')
+
+    def remove_tmp_file(self):
+        del_directory(self._tmpdir)

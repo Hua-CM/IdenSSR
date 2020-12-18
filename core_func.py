@@ -9,7 +9,7 @@
 import argparse
 import os
 from ssr_utils import fasta_ssrs, build_rep_set
-from plugin_utils import PrimerDesign, ScreenSSR, combine2
+from plugin_utils import PrimerDesign, ScreenSSR2, combine2
 
 
 def getArgs():
@@ -26,21 +26,21 @@ def getArgs():
     optional.add_argument('-u', '--min-repeat-units', type=int, nargs='+', metavar='<INT>', default=[9, 6, 6, 6, 5, 5],
                           help='Minimum unit of a repeat motif. Default 9 6 6 6 5 5 for mono-, di-, tri-, '
                                'tetra-, penta-, hexa- nucleotide repeat, respectively')
-    optional.add_argument('-m', '--min-motif-size', type=int, metavar='<INT>', default=1,
+    optional.add_argument('-l', '--min-motif-size', type=int, metavar='<INT>', default=1,
                           help='Only keep motifs greater than or equal to the minium motif size. Default 1 (which means keep all SSR)')
     optional.add_argument('-p', '--primer', action='store_true', default=False,
                           help='Design primer at the same time')
     optional.add_argument('-s', '--screen', action='store_true', default=False,
                           help='Screen out the SSR could used in identification at the same time')
-    optional.add_argument('-a', '--assembly', nargs='+', type=str,
-                          help='The sequence id you want to screen')
+    optional.add_argument('-m', '--meta', type=str,
+                          help='The meta file for screening')
     # Multiprocessing threads
     optional.add_argument('-t', '--threads', type=int, metavar='<INT>', default=1, help='Number of threads to run the process on. Default is 1.')
 
     args = parser.parse_args()
 
-    if args.screen and (not args.assembly):
-        parser.error("-a must with -s/--screen")
+    if args.screen and (not args.meta):
+        parser.error("-m must with -s/--screen")
 
     return args
 
@@ -53,7 +53,7 @@ def main():
     repeats_info = build_rep_set(open(os.path.join(location, 'all_repeats_1-6nt.txt'), 'r'), unit_size_dict, args.min_motif_size)
     fasta_ssrs(args, repeats_info)
     if args.screen:
-        screen = ScreenSSR(args)
+        screen = ScreenSSR2(args)
         screen.blast_pair()
         screen.blast_parse()
         screen.remove_tmp_file()
