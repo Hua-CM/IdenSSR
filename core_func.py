@@ -37,7 +37,8 @@ def getArgs():
     optional.add_argument('-a', '--assembly', nargs='+', type=str,
                           help='The sequence id you want to screen')
     # Multiprocessing threads
-    optional.add_argument('-t', '--threads', type=int, metavar='<INT>', default=1, help='Number of threads to run the process on. Default is 1.')
+    optional.add_argument('-t', '--threads', type=int, metavar='<INT>', default=1,
+                          help='Number of threads to run the process on. Default is 1.')
 
     args = parser.parse_args()
 

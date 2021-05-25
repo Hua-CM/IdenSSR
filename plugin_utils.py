@@ -15,7 +15,7 @@ from Bio.SeqRecord import SeqRecord
 from Bio.Seq import Seq
 from collections import deque
 from Bio.Blast.Applications import NcbiblastnCommandline, NcbimakeblastdbCommandline
-
+from itertools import combinations
 
 def get_seq(_seq, _start, _end):
     """
@@ -40,9 +40,10 @@ def del_directory(_dir):
         os.removedirs(r_)
 
 
-def combine2(args):
-    tb_primer = pd.read_table('_primer'.join(os.path.splitext(args.output)))
-    tb_screen_out = pd.read_table('_screen'.join(os.path.splitext(args.output)))
+def combine2(primer_table, ssr_table):
+    #tb_primer = pd.read_table()
+    tb_primer = pd.read_table(primer_table)
+    tb_screen_out = pd.read_table(ssr_table)
     if tb_primer.empty or tb_screen_out.empty:
         return print('Primer of screen_out is empty')
     tb_primer['tmp_query'] = tb_primer.apply(lambda x: '_'.join([str(x['seqid']), str(x['start']), str(x['end'])]),
@@ -50,7 +51,7 @@ def combine2(args):
     tb_screen_out['tmp_query'] = tb_screen_out.apply(lambda x: '_'.join([str(x['seqid']), str(x['start']),str(x['end'])]),
                                                      axis=1)
     tb_primer[tb_primer['tmp_query'].isin(tb_screen_out['tmp_query'].to_list())].drop(columns='tmp_query').to_csv(
-        '_filter_primer'.join(os.path.splitext(args.output)), sep='\t', index=False
+        '_primer'.join(os.path.splitext(ssr_table)), sep='\t', index=False
     )
 
 
@@ -69,8 +70,11 @@ class PrimerDesign:
         print("Primer design start")
         print('(1/3) prepare config file')
         if not circular:
-            meta_tb = self.ssr_info[(self.ssr_info['start'] > 200) & (self.ssr_info['end'] < self.lengths[self.ssr_info[
-                'seqid']]-200)]
+            _tuple_list = []
+            for _tuple in self.ssr_info.itertuples():
+                if (_tuple.start > 200) & (_tuple.end < self.lengths[_tuple.seqid] - 200):
+                    _tuple_list.append(_tuple)
+            meta_tb = pd.DataFrame(_tuple_list).drop(columns='Index')
         else:
             meta_tb = self.ssr_info
         _write_list = []
@@ -249,6 +253,7 @@ class ScreenPrimer:
         self._primer_info = pd.read_table('_primer'.join(os.path.splitext(args.output)))
         self._threads = args.threads
         self._tmpdir = mktemp()
+        self._primer = args.primer
 
     def blast_self(self):
         os.mkdir(self._tmpdir)
