@@ -72,7 +72,7 @@ def get_ssrs(seq_record, repeats_info, out):
                         match = False
                         match_length = sub_stop - sub_start
                         num_units = int(match_length/motif_length)
-                        print(seq_record.id, sub_start, sub_stop, rep_class, match_length, strand, num_units, sub_seq[:motif_length], sep="\t", file=out_file)
+                        print(seq_record.id, sub_start + 1, sub_stop + 1, rep_class, match_length, strand, num_units, sub_seq[:motif_length], seq_record.id + '_' + str(sub_start + 1), sep="\t", file=out_file)
                         sub_start = sub_stop - fallback
                     elif input_seq[j] == repeat_seq[i]:
                         sub_stop += 1
@@ -83,7 +83,7 @@ def get_ssrs(seq_record, repeats_info, out):
                         match = False
                         match_length = sub_stop - sub_start
                         num_units = int(match_length/motif_length)
-                        print(seq_record.id, sub_start, sub_stop, rep_class, match_length, strand, num_units, sub_seq[:motif_length], sep="\t", file=out_file)
+                        print(seq_record.id, sub_start + 1, sub_stop + 1, rep_class, match_length, strand, num_units, sub_seq[:motif_length], seq_record.id + '_' + str(sub_start + 1), sep="\t", file=out_file)
                         sub_start = sub_stop - fallback
             else:
                 sub_start += 1
@@ -104,7 +104,7 @@ def fasta_ssrs(args, repeats_info):
     num_records = len(records)
 
     file_output = open(args.output, 'w')
-    print('\t'.join(['seqid', 'start', 'end', 'class', 'length', 'strand', 'units', 'motif']), file=file_output)
+    print('\t'.join(['seqid', 'start', 'end', 'class', 'length', 'strand', 'units', 'motif', 'ID']), file=file_output)
 
     if args.threads > 1:
         i = 0

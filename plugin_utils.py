@@ -8,17 +8,27 @@
 
 import pandas as pd
 import os
+import xml.etree.ElementTree as ET
 from tempfile import mktemp
 from Bio import SeqIO
+from Bio.SeqRecord import SeqRecord
+from Bio.Seq import Seq
 from collections import deque
 from Bio.Blast.Applications import NcbiblastnCommandline, NcbimakeblastdbCommandline
 from itertools import combinations
 
 def get_seq(_seq, _start, _end):
+    """
+
+    :param _seq:
+    :param _start: !!! should be SSR start position on genome (begin from 1, not 0)
+    :param _end: !!! should be SSR end position on genome (begin from 1, not 0)
+    :return:
+    """
     if _start <= 200:
-        return _seq.seq[len(_seq.seq)-201+_start:] + _seq.seq[0: _end+200]
+        return _seq.seq[0: _end+200]
     elif _end >= len(_seq.seq)-200:
-        return _seq.seq[_start-201:] + _seq.seq[:200-(len(_seq.seq)-_end)]
+        return _seq.seq[_start-201:]
     else:
         return _seq.seq[_start-201: _end+200]
 
@@ -116,13 +126,15 @@ class PrimerDesign:
                                    'Reverse': _model_dict['PRIMER_RIGHT_0_SEQUENCE'],
                                    'Reverse_position': _model_dict['PRIMER_RIGHT_0'].split(',')[0],
                                    'Reverse_length': _model_dict['PRIMER_RIGHT_0'].split(',')[1],
-                                   'Reverse_TM': _model_dict['PRIMER_RIGHT_0_TM']
+                                   'Reverse_TM': _model_dict['PRIMER_RIGHT_0_TM'],
+                                   'ID': '_'.join(_model_dict['SEQUENCE_ID'].split('_')[:-1])
                                    }
                         _record_list.append(_record)
                     else:
                         _record = {'seqid': '_'.join(_model_dict['SEQUENCE_ID'].split('_')[:-2]),
                                    'start': _model_dict['SEQUENCE_ID'].split('_')[-2],
-                                   'end': _model_dict['SEQUENCE_ID'].split('_')[-1]
+                                   'end': _model_dict['SEQUENCE_ID'].split('_')[-1],
+                                   'ID': '_'.join(_model_dict['SEQUENCE_ID'].split('_')[:-1])
                                    }
                         _record_list.append(_record)
                     _module = []
@@ -154,11 +166,8 @@ class ScreenSSR:
         ssr_info = pd.read_table(self._ssr_info)
         ssr_info = ssr_info[ssr_info['seqid'].isin(self._assembly)]
         if not self._circular:
-            _tuple_list = []
-            for _tuple in ssr_info.itertuples():
-                if (_tuple.start > 200) & (_tuple.end < lengths[_tuple.seqid] - 200):
-                    _tuple_list.append(_tuple)
-            ssr_info = pd.DataFrame(_tuple_list).drop(columns='Index')
+            ssr_info = ssr_info[(ssr_info['start'] > 200) &
+                                (ssr_info['end'] < lengths[ssr_info['seqid']] - 200)]
         # prepare sequences
         print('(1/3) prepare sequence for BLAST')
         seqlist = []
@@ -234,109 +243,64 @@ class ScreenSSR:
         del_directory(self._tmpdir)
 
 
-class ScreenSSR2:
+class ScreenPrimer:
+    """
+    screen primer specificity
+    """
     def __init__(self, args):
         self._seq_path = args.input
         self._ssr_info = args.output
-        self._meta = args.meta
-        self._circular = args.circular
+        self._primer_info = pd.read_table('_primer'.join(os.path.splitext(args.output)))
         self._threads = args.threads
         self._tmpdir = mktemp()
         self._primer = args.primer
 
-    def blast_pair(self):
-        print('Screen SSR start')
-        # make a temporary directory for BLAST
+    def blast_self(self):
         os.mkdir(self._tmpdir)
-        sequences = {_.id: _ for _ in SeqIO.parse(self._seq_path, 'fasta')}
-        lengths = {_id: len(_seq.seq) for _id, _seq in sequences.items()}
-        ssr_info = pd.read_table(self._ssr_info)
-        meta_info = pd.read_table(self._meta, names=['group', 'seqid'])
-        ssr_info = ssr_info[ssr_info['seqid'].isin(meta_info['seqid'].to_list())]
-        if not self._circular:
-            _tuple_list = []
-            for _tuple in ssr_info.itertuples():
-                if (_tuple.start > 200) & (_tuple.end < lengths[_tuple.seqid] - 200):
-                    _tuple_list.append(_tuple)
-            ssr_info = pd.DataFrame(_tuple_list).drop(columns='Index')
-        # prepare sequences
-        print('(1/3) prepare sequence for BLAST')
-        seqlist = []
-        for _idx, _item in ssr_info.iterrows():
-            genome_seq = sequences[_item['seqid']]
-            _sequence_id = str(genome_seq.id) + "_" + str(_item['start']) + "_" + str(_item['end'])
-            _sequence_template = str(get_seq(genome_seq, _item['start'], _item['end']))
-            seqlist.append('>' + _sequence_id)
-            seqlist.append(_sequence_template)
-        with open(os.path.join(self._tmpdir, 'query.fasta'), 'w') as f:
-            f.write('\n'.join(seqlist))
-            f.write('\n')
+        # prepare fasta
+        seq_list = []
+        for _idx, _row in self._primer_info.iterrows():
+            seq_list.append(SeqRecord(Seq(_row['Forward']), id=_row['ID'] + '_F'))
+            seq_list.append(SeqRecord(Seq(_row['Reverse']), id=_row['ID'] + '_R'))
+        SeqIO.write(seq_list, os.path.join(self._tmpdir, 'query.fasta'), 'fasta')
         # BLAST
-        print('(2/3) BLAST start')
         database_cmd = NcbimakeblastdbCommandline(
             dbtype='nucl',
-            input_file=os.path.join(self._tmpdir, 'query.fasta'))
+            input_file=self._seq_path)
         blastn_cmd = NcbiblastnCommandline(
             query=os.path.join(self._tmpdir, 'query.fasta'),
-            db=os.path.join(self._tmpdir, 'query.fasta'),
-            dust='no',
-            outfmt='\"6 qacc sacc length pident evalue\"',
+            db=self._seq_path,
+            task='blastn-short',
+            outfmt=5,
             num_threads=self._threads,
-            evalue='1e-3',
-            out=os.path.join(self._tmpdir, 'blast_result.txt'),
-            max_hsps=1)
-        database_cmd()
-        blastn_cmd()
-        print('(2/3) BLAST Done')
+            evalue='10',
+            out=os.path.join(self._tmpdir, 'blast_result.xml'),
+            max_hsps=1,
+            max_target_seqs=2)
+        try:
+            database_cmd()
+            blastn_cmd()
+        except IOError:
+            print('please check your file and/or its permission')
 
     def blast_parse(self):
-        print('(3/3) Parse BLAST result')
-        blast_result = pd.read_table(os.path.join(self._tmpdir, 'blast_result.txt'),
-                                     names=['query_', 'subject_', 'length', 'identity', 'evalue'])
-        ssr_info = pd.read_table(self._ssr_info)
-        meta_info = pd.read_table(self._meta, names=['group', 'seqid'])
-        _seq_list_list = meta_info.groupby('group')['seqid'].apply(list).reset_index(name='seqid')['seqid'].to_list()
-        _group_list_list = meta_info.groupby('group')['seqid'].apply(list).reset_index(name='seqid')['group'].to_list()
-        for _idx_tuple in combinations(range(len(_seq_list_list)), 2):
-            _query_group = _seq_list_list[_idx_tuple[0]]
-            _subject_group = _seq_list_list[_idx_tuple[1]]
-            blast_moudle_result = blast_result[(blast_result.query_.str.startswith(tuple(_query_group))) &
-                                               ~(blast_result.subject_.str.startswith(tuple(_query_group)))]
-            query_list = list(set(blast_moudle_result['query_'].to_list()))
-            keep_list = []
-            for _query in query_list:
-                _query_table = blast_moudle_result[blast_moudle_result['query_'] == _query]
-                _query_asm = '_'.join(_query.split('_')[:-2])
-                q_start, q_end = _query.split('_')[-2:]
-                query_class, query_unit = ssr_info[(ssr_info['seqid'] == _query_asm) &
-                                                   (ssr_info['start'] == int(q_start)) &
-                                                   (ssr_info['end'] == int(q_end))].iloc[0][['class', 'units']]
-                subject_id_list = []
-                for _idx, _row in _query_table.iterrows():
-                    s_id = '_'.join(_row['subject_'].split('_')[:-2])
-                    s_start, s_end = _row['subject_'].split('_')[-2:]
-                    subject_class, subject_unit = ssr_info[(ssr_info['seqid'] == s_id) &
-                                                           (ssr_info['start'] == int(s_start)) &
-                                                           (ssr_info['end'] == int(s_end))].iloc[0][['class', 'units']]
-                    if (subject_class == query_class) and (not query_unit == subject_unit) and (s_id in _subject_group):
-                        subject_id_list.append(_row['subject_'])
-                if not len(subject_id_list) == 0:
-                    keep_list.append(_query)
-                    keep_list += subject_id_list
-            # screen out keep list in ssr_info
-            ssr_info_copy = ssr_info.copy()
-            ssr_info_copy['tmp_query'] = ssr_info_copy.apply(
-                lambda x: '_'.join([str(x['seqid']), str(x['start']), str(x['end'])]),
-                axis=1)
-            ssr_info_copy = ssr_info_copy[ssr_info_copy['tmp_query'].isin(keep_list)]
-            ssr_info_copy.drop(columns='tmp_query', inplace=True)
-            # output
-            _file_name = _group_list_list[_idx_tuple[0]] + 'VS' + _group_list_list[_idx_tuple[1]] + '_screen.txt'
-            _file_name = os.path.join(os.path.split(self._ssr_info)[0], _file_name)
-            ssr_info_copy.to_csv(_file_name, sep='\t', index=False)
-            if self._primer:
-                combine2('_primer'.join(os.path.splitext(self._ssr_info)), _file_name)
-        print('(3/3) Parse done')
-
-    def remove_tmp_file(self):
-        del_directory(self._tmpdir)
+        ssr_tree = ET.ElementTree(file=os.path.join(self._tmpdir, 'blast_result.xml'))
+        iter_iter = ssr_tree.iter("Iteration")
+        keep_list = []
+        for _iter in iter_iter:
+            primer_len = int(_iter.find('Iteration_query-len').text)
+            primer_id = _iter.find('Iteration_query-def').text
+            try:
+                hsp = _iter.findall('Iteration_hits')[0].findall('Hit')[1].find('Hit_hsps').find('Hsp')
+                _end = int(hsp.find('Hsp_query-to').text)
+                if _end - primer_len < -6:
+                    keep_list.append(primer_id)
+                else:
+                    if hsp.find('Hsp_midline').text[-(_end - primer_len + 6):].count(' ') + primer_len - _end > 3:
+                        keep_list.append(primer_id)
+            except IndexError:
+                keep_list.append(primer_id)
+        primer_list = [primer_id[:-2] for primer_id in keep_list]
+        primer_specificity = self._primer_info[self._primer_info['ID'].isin(primer_list)]
+        primer_specificity.to_csv('_SpecificPrimer'.join(os.path.splitext(self._ssr_info)), sep='\t', index=False)
+        del_directory(primer_specificity)
