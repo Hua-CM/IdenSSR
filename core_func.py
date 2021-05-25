@@ -9,7 +9,7 @@
 import argparse
 import os
 from ssr_utils import fasta_ssrs, build_rep_set
-from plugin_utils import PrimerDesign, ScreenSSR, combine2
+from plugin_utils import PrimerDesign, ScreenSSR, ScreenPrimer, combine2
 
 
 def getArgs():
@@ -32,6 +32,8 @@ def getArgs():
                           help='Design primer at the same time')
     optional.add_argument('-s', '--screen', action='store_true', default=False,
                           help='Screen out the SSR could used in identification at the same time')
+    optional.add_argument('-f', '--specificity', action='store_true', default=False,
+                          help='Check primer specificity. Must with -p')
     optional.add_argument('-a', '--assembly', nargs='+', type=str,
                           help='The sequence id you want to screen')
     # Multiprocessing threads
@@ -41,6 +43,8 @@ def getArgs():
 
     if args.screen and (not args.assembly):
         parser.error("-a must with -s/--screen")
+    if args.specificity and (not args.primer):
+        parser.error("-f must with -p/--primer")
 
     return args
 
@@ -66,6 +70,10 @@ def main():
     if args.screen and args.primer:
         # filter primer for screened SSR
         combine2(args)
+    if args.specificity:
+        primer2_ = ScreenPrimer(args)
+        primer2_.blast_self()
+        primer2_.blast_parse()
 
 
 if __name__ == '__main__':

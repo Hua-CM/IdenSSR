@@ -8,17 +8,27 @@
 
 import pandas as pd
 import os
+import xml.etree.ElementTree as ET
 from tempfile import mktemp
 from Bio import SeqIO
+from Bio.SeqRecord import SeqRecord
+from Bio.Seq import Seq
 from collections import deque
 from Bio.Blast.Applications import NcbiblastnCommandline, NcbimakeblastdbCommandline
 
 
 def get_seq(_seq, _start, _end):
+    """
+
+    :param _seq:
+    :param _start: !!! should be SSR start position on genome (begin from 1, not 0)
+    :param _end: !!! should be SSR end position on genome (begin from 1, not 0)
+    :return:
+    """
     if _start <= 200:
-        return _seq.seq[len(_seq.seq)-201+_start:] + _seq.seq[0: _end+200]
+        return _seq.seq[0: _end+200]
     elif _end >= len(_seq.seq)-200:
-        return _seq.seq[_start-201:] + _seq.seq[:200-(len(_seq.seq)-_end)]
+        return _seq.seq[_start-201:]
     else:
         return _seq.seq[_start-201: _end+200]
 
@@ -112,13 +122,15 @@ class PrimerDesign:
                                    'Reverse': _model_dict['PRIMER_RIGHT_0_SEQUENCE'],
                                    'Reverse_position': _model_dict['PRIMER_RIGHT_0'].split(',')[0],
                                    'Reverse_length': _model_dict['PRIMER_RIGHT_0'].split(',')[1],
-                                   'Reverse_TM': _model_dict['PRIMER_RIGHT_0_TM']
+                                   'Reverse_TM': _model_dict['PRIMER_RIGHT_0_TM'],
+                                   'ID': '_'.join(_model_dict['SEQUENCE_ID'].split('_')[:-1])
                                    }
                         _record_list.append(_record)
                     else:
                         _record = {'seqid': '_'.join(_model_dict['SEQUENCE_ID'].split('_')[:-2]),
                                    'start': _model_dict['SEQUENCE_ID'].split('_')[-2],
-                                   'end': _model_dict['SEQUENCE_ID'].split('_')[-1]
+                                   'end': _model_dict['SEQUENCE_ID'].split('_')[-1],
+                                   'ID': '_'.join(_model_dict['SEQUENCE_ID'].split('_')[:-1])
                                    }
                         _record_list.append(_record)
                     _module = []
@@ -227,5 +239,63 @@ class ScreenSSR:
         del_directory(self._tmpdir)
 
 
-class ScreenSSR2:
-    pass
+class ScreenPrimer:
+    """
+    screen primer specificity
+    """
+    def __init__(self, args):
+        self._seq_path = args.input
+        self._ssr_info = args.output
+        self._primer_info = pd.read_table('_primer'.join(os.path.splitext(args.output)))
+        self._threads = args.threads
+        self._tmpdir = mktemp()
+
+    def blast_self(self):
+        os.mkdir(self._tmpdir)
+        # prepare fasta
+        seq_list = []
+        for _idx, _row in self._primer_info.iterrows():
+            seq_list.append(SeqRecord(Seq(_row['Forward']), id=_row['ID'] + '_F'))
+            seq_list.append(SeqRecord(Seq(_row['Reverse']), id=_row['ID'] + '_R'))
+        SeqIO.write(seq_list, os.path.join(self._tmpdir, 'query.fasta'), 'fasta')
+        # BLAST
+        database_cmd = NcbimakeblastdbCommandline(
+            dbtype='nucl',
+            input_file=self._seq_path)
+        blastn_cmd = NcbiblastnCommandline(
+            query=os.path.join(self._tmpdir, 'query.fasta'),
+            db=self._seq_path,
+            task='blastn-short',
+            outfmt=5,
+            num_threads=self._threads,
+            evalue='10',
+            out=os.path.join(self._tmpdir, 'blast_result.xml'),
+            max_hsps=1,
+            max_target_seqs=2)
+        try:
+            database_cmd()
+            blastn_cmd()
+        except IOError:
+            print('please check your file and/or its permission')
+
+    def blast_parse(self):
+        ssr_tree = ET.ElementTree(file=os.path.join(self._tmpdir, 'blast_result.xml'))
+        iter_iter = ssr_tree.iter("Iteration")
+        keep_list = []
+        for _iter in iter_iter:
+            primer_len = int(_iter.find('Iteration_query-len').text)
+            primer_id = _iter.find('Iteration_query-def').text
+            try:
+                hsp = _iter.findall('Iteration_hits')[0].findall('Hit')[1].find('Hit_hsps').find('Hsp')
+                _end = int(hsp.find('Hsp_query-to').text)
+                if _end - primer_len < -6:
+                    keep_list.append(primer_id)
+                else:
+                    if hsp.find('Hsp_midline').text[-(_end - primer_len + 6):].count(' ') + primer_len - _end > 3:
+                        keep_list.append(primer_id)
+            except IndexError:
+                keep_list.append(primer_id)
+        primer_list = [primer_id[:-2] for primer_id in keep_list]
+        primer_specificity = self._primer_info[self._primer_info['ID'].isin(primer_list)]
+        primer_specificity.to_csv('_SpecificPrimer'.join(os.path.splitext(self._ssr_info)), sep='\t', index=False)
+        del_directory(primer_specificity)
