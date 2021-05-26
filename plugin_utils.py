@@ -260,8 +260,11 @@ class ScreenPrimer:
         # prepare fasta
         seq_list = []
         for _idx, _row in self._primer_info.iterrows():
-            seq_list.append(SeqRecord(Seq(_row['Forward']), id=_row['ID'] + '_F'))
-            seq_list.append(SeqRecord(Seq(_row['Reverse']), id=_row['ID'] + '_R'))
+            try:
+                seq_list.append(SeqRecord(Seq(_row['Forward']), id=_row['ID'] + '_F', name='', description=''))
+                seq_list.append(SeqRecord(Seq(_row['Reverse']), id=_row['ID'] + '_R', name='', description=''))
+            except TypeError:
+                continue
         SeqIO.write(seq_list, os.path.join(self._tmpdir, 'query.fasta'), 'fasta')
         # BLAST
         database_cmd = NcbimakeblastdbCommandline(
@@ -303,4 +306,4 @@ class ScreenPrimer:
         primer_list = [primer_id[:-2] for primer_id in keep_list]
         primer_specificity = self._primer_info[self._primer_info['ID'].isin(primer_list)]
         primer_specificity.to_csv('_SpecificPrimer'.join(os.path.splitext(self._ssr_info)), sep='\t', index=False)
-        del_directory(primer_specificity)
+        del_directory(self._tmpdir)
