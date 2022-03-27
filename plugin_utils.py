@@ -15,7 +15,7 @@ from Bio.SeqRecord import SeqRecord
 from Bio.Seq import Seq
 from collections import deque
 from Bio.Blast.Applications import NcbiblastnCommandline, NcbimakeblastdbCommandline
-from itertools import combinations
+from collections import defaultdict
 
 def get_seq(_seq, _start, _end):
     """
@@ -41,7 +41,6 @@ def del_directory(_dir):
 
 
 def combine2(primer_table, ssr_table):
-    #tb_primer = pd.read_table()
     tb_primer = pd.read_table(primer_table)
     tb_screen_out = pd.read_table(ssr_table)
     if tb_primer.empty or tb_screen_out.empty:
@@ -152,22 +151,36 @@ class ScreenSSR:
     def __init__(self, args):
         self._seq_path = args.input
         self._ssr_info = args.output
-        self._assembly = args.assembly
+        self._screen = args.screen
+        self._assembly = self.parse_info(args.assembly)
         self._circular = args.circular
         self._threads = args.threads
         self._tmpdir = mktemp()
+
+    @staticmethod
+    def parse_info(file_path):
+        species_dict = defaultdict(list)
+        with open(file_path) as f_in:
+            for line in f_in.read().strip().split('\n'):
+                _species, _seq_id = line.split('\t')
+                species_dict[_species].append(_seq_id)
+        return species_dict
 
     def blast_pair(self):
         print('Screen SSR start')
         # make a temporary directory for BLAST
         os.mkdir(self._tmpdir)
-        sequences = {_.id: _ for _ in SeqIO.parse(self._seq_path, 'fasta')}
+        sequences = SeqIO.to_dict(SeqIO.parse(self._seq_path, 'fasta'))
         lengths = {_id: len(_seq.seq) for _id, _seq in sequences.items()}
         ssr_info = pd.read_table(self._ssr_info)
-        ssr_info = ssr_info[ssr_info['seqid'].isin(self._assembly)]
+        tmp_lst = []
+        for _ in self._assembly.values():
+            tmp_lst += _
+        ssr_info = ssr_info[ssr_info['seqid'].isin(tmp_lst)]
+        del tmp_lst
         if not self._circular:
-            ssr_info = ssr_info[(ssr_info['start'] > 200) &
-                                (ssr_info['end'] < lengths[ssr_info['seqid']] - 200)]
+            ssr_info = ssr_info[ssr_info.apply(lambda x: (x['start'] > 200) & (x['end'] < lengths[x['seqid']] - 200),
+                                               axis=1)]
         # prepare sequences
         print('(1/3) prepare sequence for BLAST')
         seqlist = []
@@ -204,36 +217,39 @@ class ScreenSSR:
                                      names=['query_', 'subject_', 'length', 'identity', 'evalue'])
         ssr_info = pd.read_table(self._ssr_info)
         # filter blast result
-        query_asm = self._assembly[0]
-        blast_result = blast_result[(blast_result.query_.str.startswith(query_asm)) & ~(blast_result.subject_.str.startswith(query_asm))]
-        #
+        query_asm = self._assembly[self._screen[0]]
         query_list = list(set(blast_result['query_'].to_list()))
-        keep_list = []
+        keep_lst = []
         # get keep list
         for _query in query_list:
+            q_id = '_'.join(_query.split('_')[:-2])
+            if q_id not in query_asm:
+                continue
             _query_table = blast_result[blast_result['query_'] == _query]
             q_start, q_end = _query.split('_')[-2:]
-            query_class, query_unit = ssr_info[(ssr_info['seqid'] == query_asm) &
+            query_class, query_unit = ssr_info[(ssr_info['seqid'] == q_id) &
                                                (ssr_info['start'] == int(q_start)) &
                                                (ssr_info['end'] == int(q_end))].iloc[0][['class', 'units']]
-            subject_list = [query_asm]
             subject_id_list = []
             for _idx, _row in _query_table.iterrows():
                 s_id = '_'.join(_row['subject_'].split('_')[:-2])
+                if s_id not in self._assembly[self._screen[1]]:
+                    continue
                 s_start, s_end = _row['subject_'].split('_')[-2:]
-                subject_class, subject_unit = ssr_info[(ssr_info['seqid'] == s_id) &
-                                                       (ssr_info['start'] == int(s_start)) &
-                                                       (ssr_info['end'] == int(s_end))].iloc[0][['class', 'units']]
+                subject_class, subject_unit, subject_id = \
+                    ssr_info[(ssr_info['seqid'] == s_id) &
+                             (ssr_info['start'] == int(s_start)) &
+                             (ssr_info['end'] == int(s_end))].\
+                    iloc[0][['class', 'units', 'ID']]
                 if (subject_class == query_class) and (not query_unit == subject_unit):
-                    subject_list.append(s_id)
-                    subject_id_list.append(_row['subject_'])
-            if set(subject_list) == set(self._assembly):
-                keep_list.append(_query)
-                keep_list += subject_id_list
+                    subject_id_list.append(subject_id)
+            if subject_id_list:
+                keep_lst.append({"tmp_query": _query, 'match_ID': ';'.join(subject_id_list)})
         # screen out keep list in ssr_info
         ssr_info['tmp_query'] = ssr_info.apply(lambda x: '_'.join([str(x['seqid']), str(x['start']), str(x['end'])]),
                                                axis=1)
-        ssr_info = ssr_info[ssr_info['tmp_query'].isin(keep_list)]
+        keep_info = pd.DataFrame(keep_lst)
+        ssr_info = ssr_info.merge(keep_info, how='right')
         ssr_info.drop(columns='tmp_query', inplace=True)
         # output
         ssr_info.to_csv('_screen'.join(os.path.splitext(self._ssr_info)), sep='\t', index=False)

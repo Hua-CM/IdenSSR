@@ -27,15 +27,16 @@ def getArgs():
                           help='Minimum unit of a repeat motif. Default 9 6 6 6 5 5 for mono-, di-, tri-, '
                                'tetra-, penta-, hexa- nucleotide repeat, respectively')
     optional.add_argument('-m', '--min-motif-size', type=int, metavar='<INT>', default=1,
-                          help='Only keep motifs greater than or equal to the minium motif size. Default 1 (which means keep all SSR)')
+                          help='Only keep motifs greater than or equal to the minium motif size. '
+                               'Default 1 (which means keep all SSR)')
     optional.add_argument('-p', '--primer', action='store_true', default=False,
                           help='Design primer at the same time')
-    optional.add_argument('-s', '--screen', action='store_true', default=False,
-                          help='Screen out the SSR could used in identification at the same time')
     optional.add_argument('-f', '--specificity', action='store_true', default=False,
                           help='Check primer specificity. Must with -p')
-    optional.add_argument('-a', '--assembly', nargs='+', type=str,
-                          help='The sequence id you want to screen')
+    optional.add_argument('-s', '--screen', nargs=2, type=str, metavar=('speciesA', 'speciesB'),
+                          help='Screen out the SSR could used in identification between species A and species B')
+    optional.add_argument('-a', '--assembly', type=str,
+                          help='The species-sequence info')
     # Multiprocessing threads
     optional.add_argument('-t', '--threads', type=int, metavar='<INT>', default=1,
                           help='Number of threads to run the process on. Default is 1.')
@@ -70,7 +71,10 @@ def main():
         primer_.remove_tmp_file()
     if args.screen and args.primer:
         # filter primer for screened SSR
-        combine2(args)
+        combine2(
+            '_primer'.join(os.path.splitext(args.output)),
+            '_screen'.join(os.path.splitext(args.output))
+            )
     if args.specificity:
         primer2_ = ScreenPrimer(args)
         primer2_.blast_self()
